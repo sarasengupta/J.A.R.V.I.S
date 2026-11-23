@@ -1,0 +1,5 @@
+{
+  "_comment": "Add your own apps here: \"spoken name\": \"path, command, protocol (name:) or website\". Keys starting with _ are ignored. Restart not required.",
+  "_example_game": "D:\\Games\\MyGame\\MyGame.exe",
+  "_example_site": "https://www.notion.so"
+}
