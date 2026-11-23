@@ -1,0 +1,19 @@
+# Dependencies & build output
+node_modules/
+frontend/build/
+Frontend_vite_backup/
+
+# Environment secrets (never commit API keys)
+.env
+Backend/.env
+frontend/.env
+.env.local
+
+# Logs, backups, and temporary audio test files
+*.log
+*.bak
+Backend/*.mp3
+Backend/*.wav
+Backend/*.m4a
+.DS_Store
+Thumbs.db
