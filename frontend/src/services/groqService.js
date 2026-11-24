@@ -119,11 +119,16 @@ export function extractActionTag(text) {
 /**
  * Streams real-time token responses from Groq LPU
  */
-export function streamGroqCompletion(prompt, history = [], onChunk, onDone, onError) {
+export function streamGroqCompletion(prompt, history = [], onChunk, onDone, onError, emotionContext = null) {
   const controller = new AbortController();
 
+  let systemContent = SYSTEM_PROMPT;
+  if (emotionContext && emotionContext.emotion && emotionContext.emotion !== 'calm') {
+    systemContent += `\n\n[LIVE VOICE EMOTION SENSOR: Sara currently sounds ${emotionContext.emotion.toUpperCase()} (${emotionContext.reason}). ${emotionContext.toneHint}]`;
+  }
+
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
     ...history.slice(-6),
     { role: 'user', content: prompt }
   ];

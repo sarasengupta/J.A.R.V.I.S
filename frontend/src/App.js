@@ -13,6 +13,11 @@ import {
   speakWithProfile,
   stopJarvisSpeech
 } from './services/ttsService';
+import {
+  createVoiceEmotionMonitor,
+  detectUserEmotion,
+  EMOTION_PROFILES
+} from './services/emotionService';
 
 function App() {
   const [systemTime, setSystemTime] = useState(new Date().toLocaleTimeString());
@@ -33,6 +38,7 @@ function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechError, setSpeechError] = useState(null);
   const [actionStatus, setActionStatus] = useState(null);
+  const [detectedMood, setDetectedMood] = useState(EMOTION_PROFILES.calm);
   const [, setMicPermissionGranted] = useState(false);
 
   // Stable references to prevent component re-render teardowns
@@ -54,6 +60,7 @@ function App() {
   const activeAbortRef = useRef(null);
   const lastDispatchedPromptRef = useRef('');
   const keepAliveStreamRef = useRef(null);
+  const emotionMonitorRef = useRef(null);
   const terminalEndRef = useRef(null);
   const wakeTimerRef = useRef(null);
 
@@ -195,6 +202,11 @@ function App() {
 
     triggerHudTelemetryReaction(trimmed);
 
+    // Detect Sara's emotion from live vocal tone + words and adapt J.A.R.V.I.S.'s response
+    const vocalStats = emotionMonitorRef.current ? emotionMonitorRef.current.getRecentVocalStats() : null;
+    const emotion = detectUserEmotion(trimmed, vocalStats);
+    setDetectedMood(emotion);
+
     // Stream directly from Groq LPUs
     const startLlmStream = () => {
     activeAbortRef.current = streamGroqCompletion(
@@ -240,7 +252,8 @@ function App() {
         setIsGenerating(false);
         activeAbortRef.current = null;
         setLlmResponse(`[COMMUNICATION ERROR: ${error.message || 'Groq connection interrupted'}]`);
-      }
+      },
+      emotion
     );
     };
 
@@ -483,6 +496,9 @@ function App() {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         if (!keepAliveStreamRef.current) {
           keepAliveStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+          if (!emotionMonitorRef.current) {
+            emotionMonitorRef.current = createVoiceEmotionMonitor(keepAliveStreamRef.current);
+          }
         }
         setMicPermissionGranted(true);
         setSpeechError(null);
@@ -553,6 +569,10 @@ function App() {
         try {
           recognitionRef.current.stop();
         } catch (e) {}
+      }
+      if (emotionMonitorRef.current) {
+        emotionMonitorRef.current.stop();
+        emotionMonitorRef.current = null;
       }
       if (keepAliveStreamRef.current) {
         keepAliveStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -692,6 +712,10 @@ function App() {
                 )}
               </div>
               <div className="console-header-actions">
+                <div className="exact-voice-btn static" title={`Detected voice mood: ${detectedMood.label} (${detectedMood.reason || 'steady tone'})`}>
+                  <span className="voice-btn-dot" style={{ backgroundColor: detectedMood.color }}></span>
+                  <span>MOOD // {detectedMood.label}</span>
+                </div>
                 <div className="exact-voice-btn static" title="Voice Model: Custom Cloned Jarvis Active">
                   <span className="voice-btn-dot" style={{ backgroundColor: '#06b6d4' }}></span>
                   <span>J.A.R.V.I.S. // CLONED</span>
