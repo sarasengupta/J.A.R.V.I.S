@@ -154,6 +154,19 @@ app.post('/api/action/execute', async (req, res) => {
           params.details || params.notes
         );
         break;
+      case 'update_calendar_event':
+        result = await actions.updateCalendarEvent(
+          params.op || params.mode || 'change',
+          params.event || params.title || params.view || '',
+          params.newWhen || params.newTime || params.when || ''
+        );
+        break;
+      case 'manage_alarms':
+        result = await actions.manageAlarms(
+          params.op || params.action || 'list',
+          params.query || params.time || params.label || ''
+        );
+        break;
       case 'write_file':
         result = await actions.writeDesktopFile(params.filename, params.content, params.folder);
         break;

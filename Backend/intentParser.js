@@ -10,6 +10,12 @@ const WAKE_PREFIX = /^(?:(?:hey|hi|ok|okay|yo)\s+)?(?:jarvis|travis|javis|jarves
 const POLITE_PREFIX = /^(?:(?:please|can you|could you|would you|will you|i want you to|i need you to|go ahead and)\s+)+/i;
 const CALENDAR_ADD_1 = /^(?:add|put|create|save|set)\s+(.+?)\s+(?:to|on|in)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar(?:\s+(.*))?$/i;
 const CALENDAR_ADD_2 = /^(?:schedule|book)\s+(?:a\s+|an\s+)?(.+?)(?:\s+(?:on|in|to)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar)?$/i;
+const CALENDAR_VIEW = /^(?:change|switch|set|show)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar\s+(?:view\s+)?to\s+(day|week|month|year|schedule|agenda)(?:\s+view)?$/i;
+const CALENDAR_CHANGE = /^(?:change|reschedule|move|edit|update)\s+(.+?)(?:\s+(?:on|in)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar)?(?:\s+to\s+(.+))?$/i;
+const CALENDAR_DELETE = /^(?:delete|remove|cancel)\s+(.+?)\s+(?:from|on|in)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar$/i;
+const ALARM_DISABLE = /^(?:disable|turn\s+off|switch\s+off|stop|cancel|delete|dismiss|clear)\s+(?:all\s+|my\s+|the\s+)?(.*?\b(?:alarms?|reminders?)\b.*)$/i;
+const ALARM_SET = /^(?:set\s+(?:an?\s+)?alarm(?:\s+for)?|wake\s+me\s+up(?:\s+at)?)\s+(.+)$/i;
+const ALARM_LIST = /^(?:list|show|check|what\s+are)\s+(?:my\s+|all\s+)?alarms?$/i;
 const TIME_QUERY = /^(?:what\s+time\s+is\s+it(?:\s+(?:right\s+)?now)?|what(?:'?s| is)\s+(?:the\s+)?(?:current\s+)?time(?:\s+(?:right\s+)?now)?|tell\s+me\s+the\s+time|current\s+time|time\s+now|time\s+please)$/i;
 const DATE_QUERY = /^(?:what(?:'?s| is)?\s+(?:today'?s\s+)?(?:the\s+)?(?:current\s+)?date|what\s+day\s+(?:is\s+it|is\s+today)|tell\s+me\s+(?:the\s+|today'?s\s+)?date|today'?s\s+date)$/i;
 const DATETIME_QUERY = /^(?:what(?:'?s| is)?\s+(?:the\s+)?(?:date\s+and\s+time|time\s+and\s+date))$/i;
@@ -50,7 +56,26 @@ function parseIntent(text) {
   if (TIME_QUERY.test(t)) return { intent: 'get_time', mode: 'time' };
   if (DATE_QUERY.test(t)) return { intent: 'get_time', mode: 'date' };
 
-  let m = t.match(CALENDAR_ADD_1);
+  let m = t.match(ALARM_DISABLE);
+  if (m) return { intent: 'manage_alarms', op: 'disable', query: m[1].trim() };
+
+  m = t.match(ALARM_SET);
+  if (m) return { intent: 'manage_alarms', op: 'set', query: m[1].replace(TRAILING_FILLER, '').trim() };
+
+  if (ALARM_LIST.test(t)) return { intent: 'manage_alarms', op: 'list', query: '' };
+
+  m = t.match(CALENDAR_VIEW);
+  if (m) return { intent: 'update_calendar_event', op: 'view', event: m[1].toLowerCase() };
+
+  m = t.match(CALENDAR_DELETE);
+  if (m) return { intent: 'update_calendar_event', op: 'delete', event: m[1].trim() };
+
+  m = t.match(CALENDAR_CHANGE);
+  if (m && (/\bcalendar\b/i.test(t) || /^(?:reschedule|move)\b/i.test(t))) {
+    return { intent: 'update_calendar_event', op: 'change', event: m[1].trim(), newWhen: (m[2] || '').trim() };
+  }
+
+  m = t.match(CALENDAR_ADD_1);
   if (m) {
     const rawEvent = [m[1], m[2]].filter(Boolean).join(' ').replace(TRAILING_FILLER, '').trim();
     if (rawEvent) return { intent: 'add_calendar_event', event: rawEvent };
@@ -109,6 +134,16 @@ async function handleIntent(text) {
       result: { success: true, time: timeStr, date: dateStr },
       message
     };
+  }
+
+  if (parsed.intent === 'manage_alarms') {
+    const result = await actions.manageAlarms(parsed.op, parsed.query);
+    return { handled: true, intent: parsed, result, message: result.message };
+  }
+
+  if (parsed.intent === 'update_calendar_event') {
+    const result = await actions.updateCalendarEvent(parsed.op, parsed.event, parsed.newWhen);
+    return { handled: true, intent: parsed, result, message: result.message };
   }
 
   if (parsed.intent === 'add_calendar_event') {

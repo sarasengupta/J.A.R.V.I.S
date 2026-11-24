@@ -222,6 +222,213 @@ async function addCalendarEvent(rawInput, explicitDate, explicitTime, explicitDe
 }
 
 /**
+ * 1d. Change / Reschedule / Delete Google Calendar Events & Switch Views
+ */
+async function updateCalendarEvent(op = 'change', eventQuery = '', newWhen = '') {
+  const mode = (op || 'change').toLowerCase();
+
+  // Switch Google Calendar view (day / week / month / agenda)
+  if (mode === 'view') {
+    const viewMap = { day: 'day', week: 'week', month: 'month', year: 'year', schedule: 'agenda', agenda: 'agenda' };
+    const v = viewMap[(eventQuery || '').toLowerCase()] || 'week';
+    const url = `https://calendar.google.com/calendar/u/0/r/${v}`;
+    const launch = await registry.launchUrl(url);
+    return {
+      success: launch.success,
+      action: 'update_calendar_event',
+      view: v,
+      url,
+      message: launch.success ? `Switched your Google Calendar to ${v} view, Ma'am.` : `Could not open Google Calendar.`
+    };
+  }
+
+  const cleanEvent = (eventQuery || '').trim();
+  if (!cleanEvent) {
+    const launch = await registry.launchUrl('https://calendar.google.com/calendar/u/0/r');
+    return {
+      success: launch.success,
+      action: 'update_calendar_event',
+      message: "Opened your Google Calendar so you can edit it, Ma'am."
+    };
+  }
+
+  // Update or remove from local calendar log
+  try {
+    if (fs.existsSync(CALENDAR_LOG_FILE)) {
+      let events = JSON.parse(fs.readFileSync(CALENDAR_LOG_FILE, 'utf-8') || '[]');
+      if (mode === 'delete' || mode === 'remove' || mode === 'cancel') {
+        events = events.filter((e) => !e.title.toLowerCase().includes(cleanEvent.toLowerCase()));
+      } else if (newWhen) {
+        const found = events.find((e) => e.title.toLowerCase().includes(cleanEvent.toLowerCase()));
+        if (found) found.when = newWhen;
+      }
+      fs.writeFileSync(CALENDAR_LOG_FILE, JSON.stringify(events, null, 2), 'utf-8');
+    }
+  } catch (e) {}
+
+  if (mode === 'delete' || mode === 'remove' || mode === 'cancel') {
+    const searchUrl = `https://calendar.google.com/calendar/u/0/r/search?q=${encodeURIComponent(cleanEvent)}`;
+    const launch = await registry.launchUrl(searchUrl);
+    return {
+      success: launch.success,
+      action: 'update_calendar_event',
+      mode: 'delete',
+      event: cleanEvent,
+      url: searchUrl,
+      message: launch.success
+        ? `Opened "${cleanEvent}" in your Google Calendar so you can delete it in one click, Ma'am.`
+        : `Could not open Google Calendar.`
+    };
+  }
+
+  // Reschedule / change event: if a new time was given, open pre-filled updated event; otherwise search it
+  if (newWhen && newWhen.trim()) {
+    return addCalendarEvent(`${cleanEvent} ${newWhen}`, '', '', 'Rescheduled via J.A.R.V.I.S.');
+  }
+
+  const searchUrl = `https://calendar.google.com/calendar/u/0/r/search?q=${encodeURIComponent(cleanEvent)}`;
+  const launch = await registry.launchUrl(searchUrl);
+  return {
+    success: launch.success,
+    action: 'update_calendar_event',
+    mode: 'change',
+    event: cleanEvent,
+    url: searchUrl,
+    message: launch.success
+      ? `Opened "${cleanEvent}" in your Google Calendar for editing, Ma'am.`
+      : `Could not open Google Calendar.`
+  };
+}
+
+/**
+ * 1e. Alarm Management (Set, Disable/Cancel, List) + Windows Clock Integration
+ */
+const ALARMS_FILE = path.join(__dirname, 'alarms.json');
+const activeAlarmHandles = new Map();
+
+function loadAlarms() {
+  try {
+    if (fs.existsSync(ALARMS_FILE)) {
+      return JSON.parse(fs.readFileSync(ALARMS_FILE, 'utf-8') || '[]');
+    }
+  } catch (e) {}
+  return [];
+}
+
+function saveAlarms(list) {
+  try {
+    fs.writeFileSync(ALARMS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+  } catch (e) {}
+}
+
+async function manageAlarms(op = 'list', rawInput = '') {
+  const mode = (op || 'list').toLowerCase();
+  let alarms = loadAlarms();
+
+  // Disable / cancel / turn off alarms & active reminders
+  if (mode === 'disable' || mode === 'cancel' || mode === 'delete' || mode === 'off') {
+    const q = (rawInput || '').toLowerCase().trim();
+    const disableAll = !q || /^(?:all|every|my|the)?\s*(?:alarms?|reminders?)$/i.test(q);
+    let disabledCount = 0;
+
+    for (const alarm of alarms) {
+      if (alarm.enabled && (disableAll || alarm.label.toLowerCase().includes(q) || alarm.timeText.toLowerCase().includes(q))) {
+        alarm.enabled = false;
+        disabledCount++;
+        const handle = activeAlarmHandles.get(alarm.id);
+        if (handle) {
+          clearTimeout(handle);
+          activeAlarmHandles.delete(alarm.id);
+        }
+      }
+    }
+    saveAlarms(alarms);
+
+    // Also cancel active J.A.R.V.I.S. reminders if requested
+    let reminderCount = 0;
+    for (const [id, item] of activeTimers.entries()) {
+      if (disableAll || (item.text && item.text.toLowerCase().includes(q))) {
+        clearTimeout(item.handle);
+        activeTimers.delete(id);
+        reminderCount++;
+      }
+    }
+
+    const total = disabledCount + reminderCount;
+    if (total > 0) {
+      return {
+        success: true,
+        action: 'manage_alarms',
+        op: 'disable',
+        disabledCount: total,
+        message: `Disabled ${total} alarm${total > 1 ? 's' : ''}, Ma'am.`
+      };
+    }
+
+    // If no J.A.R.V.I.S. alarms were active, open Windows Clock Alarms so Sara can toggle system alarms directly
+    await registry.launchApp('clock');
+    return {
+      success: true,
+      action: 'manage_alarms',
+      op: 'disable',
+      disabledCount: 0,
+      openedClock: true,
+      message: "You had no active J.A.R.V.I.S. alarms, so I opened Windows Clock so you can switch off any system alarms, Ma'am."
+    };
+  }
+
+  // Set a new alarm
+  if (mode === 'set' || mode === 'add') {
+    const parsed = parseNaturalDateTime(rawInput);
+    const now = new Date();
+    let triggerAt = parsed.start;
+    if (triggerAt <= now) {
+      triggerAt = new Date(triggerAt.getTime() + 24 * 60 * 60 * 1000);
+    }
+    const delayMs = triggerAt.getTime() - now.getTime();
+    const timeText = triggerAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const label = parsed.title && parsed.title !== 'New Event' ? parsed.title : `Alarm for ${timeText}`;
+    const id = Date.now();
+
+    const alarm = { id, label, timeText, triggerAt: triggerAt.toISOString(), enabled: true };
+    alarms.push(alarm);
+    saveAlarms(alarms);
+
+    if (delayMs > 0 && delayMs < 2147483647) {
+      const handle = setTimeout(() => {
+        activeAlarmHandles.delete(id);
+        const cur = loadAlarms().map((a) => (a.id === id ? { ...a, enabled: false } : a));
+        saveAlarms(cur);
+        const safeLabel = label.replace(/['"]/g, '');
+        const ps = `Add-Type -AssemblyName PresentationCore; [console]::beep(880,500); [console]::beep(1046,600); [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $t = $xml.GetElementsByTagName('text'); $t[0].AppendChild($xml.CreateTextNode('J.A.R.V.I.S. Alarm')) > $null; $t[1].AppendChild($xml.CreateTextNode('${safeLabel}')) > $null; [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('J.A.R.V.I.S.').Show([Windows.UI.Notifications.ToastNotification]::new($xml))`;
+        exec(`powershell -NoProfile -Command "${ps}"`, { windowsHide: true }, () => {});
+      }, delayMs);
+      activeAlarmHandles.set(id, handle);
+    }
+
+    return {
+      success: true,
+      action: 'manage_alarms',
+      op: 'set',
+      alarm,
+      message: `Alarm set for ${timeText}, Ma'am.`
+    };
+  }
+
+  // List active alarms
+  const enabled = alarms.filter((a) => a.enabled);
+  return {
+    success: true,
+    action: 'manage_alarms',
+    op: 'list',
+    alarms: enabled,
+    message: enabled.length > 0
+      ? `You have ${enabled.length} active alarm${enabled.length > 1 ? 's' : ''}: ${enabled.map((a) => a.timeText).join(', ')}, Ma'am.`
+      : "You have no active alarms set right now, Ma'am."
+  };
+}
+
+/**
  * 2. File & Document Writing (Desktop / Documents)
  */
 function writeDesktopFile(filename, content, folder = 'desktop') {
@@ -706,6 +913,8 @@ module.exports = {
   openApp,
   closeApp,
   addCalendarEvent,
+  updateCalendarEvent,
+  manageAlarms,
   launchBrowser,
   writeDesktopFile,
   readDesktopFile,

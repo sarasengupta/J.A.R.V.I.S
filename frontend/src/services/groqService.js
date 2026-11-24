@@ -42,6 +42,10 @@ Available Actions:
    [[ACTION: {"action": "close_app", "params": {"app": "<app name or this window or everything>"}}]]
 12. Add Event to Google Calendar:
    [[ACTION: {"action": "add_calendar_event", "params": {"title": "<event name>", "date": "<e.g. tomorrow or December 5>", "time": "<e.g. 4pm>"}}]]
+13. Change / Reschedule / Delete Calendar Event or Switch Calendar View:
+   [[ACTION: {"action": "update_calendar_event", "params": {"op": "change" | "delete" | "view", "event": "<event name or week/month/day>", "newWhen": "<new date/time if rescheduling>"}}]]
+14. Set, Disable, or List Alarms & Reminders:
+   [[ACTION: {"action": "manage_alarms", "params": {"op": "set" | "disable" | "list", "query": "<alarm time/label or all alarms>"}}]]
 
 Rules:
 - When performing an action, put the [[ACTION: ...]] tag FIRST, then immediately give your calm, confident confirmation to Sara.
