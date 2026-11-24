@@ -61,6 +61,167 @@ async function closeApp(appName) {
 }
 
 /**
+ * 1c. Google Calendar Event Creator (opens pre-filled event in Google Chrome)
+ */
+const CALENDAR_LOG_FILE = path.join(__dirname, 'calendar_events.json');
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function toGCalDateTime(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+}
+
+function toGCalAllDay(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+}
+
+function parseNaturalDateTime(text) {
+  const now = new Date();
+  let target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0, 0);
+  let hasTime = false;
+  let durationMin = 60;
+  let title = (text || '').trim();
+
+  // Duration: "for 2 hours" / "for 30 minutes"
+  const durM = title.match(/\bfor\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)\b/i);
+  if (durM) {
+    const val = parseFloat(durM[1]);
+    durationMin = /^h/i.test(durM[2]) ? Math.round(val * 60) : Math.round(val);
+    title = title.replace(durM[0], ' ');
+  }
+
+  // Date: today / tomorrow / day after tomorrow
+  if (/\bday after tomorrow\b/i.test(title)) {
+    target.setDate(target.getDate() + 2);
+    title = title.replace(/\b(?:on\s+)?day after tomorrow\b/i, ' ');
+  } else if (/\btomorrow\b/i.test(title)) {
+    target.setDate(target.getDate() + 1);
+    title = title.replace(/\b(?:on\s+)?tomorrow\b/i, ' ');
+  } else if (/\btoday\b|\btonight\b/i.test(title)) {
+    if (/\btonight\b/i.test(title)) {
+      target.setHours(20, 0, 0, 0);
+      hasTime = true;
+    }
+    title = title.replace(/\b(?:on\s+)?(?:today|tonight)\b/i, ' ');
+  } else {
+    // Weekday: "on Friday", "next Monday"
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayRe = new RegExp(`\\b(?:on\\s+|next\\s+|this\\s+)?(${days.join('|')})\\b`, 'i');
+    const dm = title.match(dayRe);
+    if (dm) {
+      const want = days.indexOf(dm[1].toLowerCase());
+      let diff = (want - now.getDay() + 7) % 7;
+      if (diff === 0) diff = 7;
+      target.setDate(target.getDate() + diff);
+      title = title.replace(dm[0], ' ');
+    } else {
+      // Month + day: "December 5" or "5th December"
+      const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+      const shortM = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const mNames = [...months, ...shortM].join('|');
+      const m1 = title.match(new RegExp(`\\b(?:on\\s+)?(${mNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i'));
+      const m2 = !m1 && title.match(new RegExp(`\\b(?:on\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${mNames})\\b`, 'i'));
+      if (m1 || m2) {
+        const mStr = (m1 ? m1[1] : m2[2]).toLowerCase();
+        const dayNum = parseInt(m1 ? m1[2] : m2[1], 10);
+        let monthIdx = months.indexOf(mStr);
+        if (monthIdx < 0) monthIdx = shortM.indexOf(mStr);
+        if (monthIdx >= 0 && dayNum >= 1 && dayNum <= 31) {
+          target = new Date(now.getFullYear(), monthIdx, dayNum, 9, 0, 0, 0);
+          if (target < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+            target.setFullYear(target.getFullYear() + 1);
+          }
+          title = title.replace((m1 || m2)[0], ' ');
+        }
+      }
+    }
+  }
+
+  // Time: "at 4pm", "at 10:30 am", "at 18:00", "at noon"
+  const timeM = title.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i)
+    || title.match(/\bat\s+(\d{1,2}):(\d{2})\b/i);
+  if (timeM) {
+    let hr = parseInt(timeM[1], 10);
+    const min = timeM[2] ? parseInt(timeM[2], 10) : 0;
+    const ampm = (timeM[3] || '').replace(/\./g, '').toLowerCase();
+    if (ampm === 'pm' && hr < 12) hr += 12;
+    if (ampm === 'am' && hr === 12) hr = 0;
+    target.setHours(hr, min, 0, 0);
+    hasTime = true;
+    title = title.replace(timeM[0], ' ');
+  } else if (/\b(?:at\s+)?noon\b/i.test(title)) {
+    target.setHours(12, 0, 0, 0);
+    hasTime = true;
+    title = title.replace(/\b(?:at\s+)?noon\b/i, ' ');
+  } else if (/\b(?:at\s+)?midnight\b/i.test(title)) {
+    target.setHours(0, 0, 0, 0);
+    hasTime = true;
+    title = title.replace(/\b(?:at\s+)?midnight\b/i, ' ');
+  }
+
+  title = title.replace(/\s+/g, ' ').replace(/^(?:a|an|the|my)\s+/i, '').trim();
+  return { title: title || 'New Event', start: target, hasTime, durationMin };
+}
+
+async function addCalendarEvent(rawInput, explicitDate, explicitTime, explicitDetails = '') {
+  const combined = [rawInput, explicitDate, explicitTime].filter(Boolean).join(' ');
+  const parsed = parseNaturalDateTime(combined);
+
+  let datesParam = '';
+  let readableWhen = '';
+  if (parsed.hasTime) {
+    const end = new Date(parsed.start.getTime() + parsed.durationMin * 60 * 1000);
+    datesParam = `${toGCalDateTime(parsed.start)}/${toGCalDateTime(end)}`;
+    readableWhen = parsed.start.toLocaleString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+    });
+  } else {
+    const nextDay = new Date(parsed.start.getFullYear(), parsed.start.getMonth(), parsed.start.getDate() + 1);
+    datesParam = `${toGCalAllDay(parsed.start)}/${toGCalAllDay(nextDay)}`;
+    readableWhen = parsed.start.toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric'
+    });
+  }
+
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: parsed.title,
+    dates: datesParam,
+    details: explicitDetails || 'Scheduled via J.A.R.V.I.S.'
+  });
+  const url = `https://calendar.google.com/calendar/render?${params.toString()}`;
+
+  // Save a local record as well
+  try {
+    const existing = fs.existsSync(CALENDAR_LOG_FILE)
+      ? JSON.parse(fs.readFileSync(CALENDAR_LOG_FILE, 'utf-8') || '[]')
+      : [];
+    existing.push({
+      id: Date.now(),
+      title: parsed.title,
+      when: readableWhen,
+      url,
+      createdAt: new Date().toISOString()
+    });
+    fs.writeFileSync(CALENDAR_LOG_FILE, JSON.stringify(existing, null, 2), 'utf-8');
+  } catch (e) {}
+
+  const launch = await registry.launchUrl(url);
+  return {
+    success: launch.success,
+    action: 'add_calendar_event',
+    title: parsed.title,
+    when: readableWhen,
+    url,
+    message: launch.success
+      ? `Opened Google Calendar to add "${parsed.title}" for ${readableWhen}, Ma'am. Just click Save.`
+      : `Could not open Google Calendar: ${launch.error}`
+  };
+}
+
+/**
  * 2. File & Document Writing (Desktop / Documents)
  */
 function writeDesktopFile(filename, content, folder = 'desktop') {
@@ -544,6 +705,7 @@ function searchFiles(query, folder = 'user') {
 module.exports = {
   openApp,
   closeApp,
+  addCalendarEvent,
   launchBrowser,
   writeDesktopFile,
   readDesktopFile,

@@ -146,6 +146,14 @@ app.post('/api/action/execute', async (req, res) => {
       case 'close_app':
         result = await actions.closeApp(params.app || params.appName || params.target);
         break;
+      case 'add_calendar_event':
+        result = await actions.addCalendarEvent(
+          params.title || params.event || params.text,
+          params.date,
+          params.time,
+          params.details || params.notes
+        );
+        break;
       case 'write_file':
         result = await actions.writeDesktopFile(params.filename, params.content, params.folder);
         break;

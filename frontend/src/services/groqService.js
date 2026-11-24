@@ -38,6 +38,10 @@ Available Actions:
    [[ACTION: {"action": "keyboard_control", "params": {"text": "<text to type>" | "key": "enter" | "tab" | "esc" | "ctrl+c" | "ctrl+v" | "alt+f4"}}]]
 10. Search Files across PC:
    [[ACTION: {"action": "search_files", "params": {"query": "<filename or extension>", "folder": "desktop" | "documents" | "downloads" | "user"}}]]
+11. Close Any Running App / Window:
+   [[ACTION: {"action": "close_app", "params": {"app": "<app name or this window or everything>"}}]]
+12. Add Event to Google Calendar:
+   [[ACTION: {"action": "add_calendar_event", "params": {"title": "<event name>", "date": "<e.g. tomorrow or December 5>", "time": "<e.g. 4pm>"}}]]
 
 Rules:
 - When performing an action, put the [[ACTION: ...]] tag FIRST, then immediately give your calm, confident confirmation to Sara.
