@@ -10,6 +10,9 @@ const WAKE_PREFIX = /^(?:(?:hey|hi|ok|okay|yo)\s+)?(?:jarvis|travis|javis|jarves
 const POLITE_PREFIX = /^(?:(?:please|can you|could you|would you|will you|i want you to|i need you to|go ahead and)\s+)+/i;
 const CALENDAR_ADD_1 = /^(?:add|put|create|save|set)\s+(.+?)\s+(?:to|on|in)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar(?:\s+(.*))?$/i;
 const CALENDAR_ADD_2 = /^(?:schedule|book)\s+(?:a\s+|an\s+)?(.+?)(?:\s+(?:on|in|to)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar)?$/i;
+const TIME_QUERY = /^(?:what\s+time\s+is\s+it(?:\s+(?:right\s+)?now)?|what(?:'?s| is)\s+(?:the\s+)?(?:current\s+)?time(?:\s+(?:right\s+)?now)?|tell\s+me\s+the\s+time|current\s+time|time\s+now|time\s+please)$/i;
+const DATE_QUERY = /^(?:what(?:'?s| is)?\s+(?:today'?s\s+)?(?:the\s+)?(?:current\s+)?date|what\s+day\s+(?:is\s+it|is\s+today)|tell\s+me\s+(?:the\s+|today'?s\s+)?date|today'?s\s+date)$/i;
+const DATETIME_QUERY = /^(?:what(?:'?s| is)?\s+(?:the\s+)?(?:date\s+and\s+time|time\s+and\s+date))$/i;
 const OPEN_VERBS = /^(?:open(?:\s+up)?|launch|start(?:\s+up)?|run|fire\s+up|pull\s+up|bring\s+up|boot\s+up|load(?:\s+up)?|go\s+to|show(?:\s+me)?)\s+(.+)$/i;
 const CLOSE_VERBS = /^(?:close(?:\s+down)?|quit|exit|shut\s+down|kill|end|terminate)\s+(.+)$/i;
 const SYSTEM_TARGET = /\b(computer|laptop|pc|windows|system|jarvis|yourself)\b/i;
@@ -42,6 +45,10 @@ function clean(text) {
 function parseIntent(text) {
   const t = clean(text);
   if (!t) return null;
+
+  if (DATETIME_QUERY.test(t)) return { intent: 'get_time', mode: 'datetime' };
+  if (TIME_QUERY.test(t)) return { intent: 'get_time', mode: 'time' };
+  if (DATE_QUERY.test(t)) return { intent: 'get_time', mode: 'date' };
 
   let m = t.match(CALENDAR_ADD_1);
   if (m) {
@@ -88,6 +95,21 @@ function parseIntent(text) {
 async function handleIntent(text) {
   const parsed = parseIntent(text);
   if (!parsed) return { handled: false };
+
+  if (parsed.intent === 'get_time') {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    let message = `It is ${timeStr}, Ma'am.`;
+    if (parsed.mode === 'date') message = `Today is ${dateStr}, Ma'am.`;
+    if (parsed.mode === 'datetime') message = `It is ${timeStr} on ${dateStr}, Ma'am.`;
+    return {
+      handled: true,
+      intent: parsed,
+      result: { success: true, time: timeStr, date: dateStr },
+      message
+    };
+  }
 
   if (parsed.intent === 'add_calendar_event') {
     const result = await actions.addCalendarEvent(parsed.event);

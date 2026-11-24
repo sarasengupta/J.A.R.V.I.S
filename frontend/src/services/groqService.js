@@ -122,7 +122,18 @@ export function extractActionTag(text) {
 export function streamGroqCompletion(prompt, history = [], onChunk, onDone, onError, emotionContext = null) {
   const controller = new AbortController();
 
-  let systemContent = SYSTEM_PROMPT;
+  const now = new Date();
+  const localClock = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+
+  let systemContent = `${SYSTEM_PROMPT}\n\n[CURRENT LOCAL DATE & TIME ON SARA'S PC: ${localClock}]`;
   if (emotionContext && emotionContext.emotion && emotionContext.emotion !== 'calm') {
     systemContent += `\n\n[LIVE VOICE EMOTION SENSOR: Sara currently sounds ${emotionContext.emotion.toUpperCase()} (${emotionContext.reason}). ${emotionContext.toneHint}]`;
   }
