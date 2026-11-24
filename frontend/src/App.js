@@ -59,6 +59,7 @@ function App() {
   const speechDebounceRef = useRef(null);
   const activeAbortRef = useRef(null);
   const lastDispatchedPromptRef = useRef('');
+  const lastDispatchedAtRef = useRef(0);
   const keepAliveStreamRef = useRef(null);
   const emotionMonitorRef = useRef(null);
   const terminalEndRef = useRef(null);
@@ -173,8 +174,12 @@ function App() {
 
     const trimmed = userDirective.trim();
 
-    // Prevent re-dispatching identical prompt while already streaming
-    if (trimmed.toLowerCase() === lastDispatchedPromptRef.current.toLowerCase() && isGeneratingRef.current) {
+    // Prevent duplicate app/action launches when interim pause & final transcript arrive back-to-back
+    const now = Date.now();
+    if (
+      trimmed.toLowerCase() === lastDispatchedPromptRef.current.toLowerCase() &&
+      (isGeneratingRef.current || now - lastDispatchedAtRef.current < 4000)
+    ) {
       return;
     }
 
@@ -184,6 +189,7 @@ function App() {
       setLlmResponse('');
       setLiveTranscript('');
       lastDispatchedPromptRef.current = '';
+      lastDispatchedAtRef.current = 0;
       historyRef.current = [];
       return;
     }
@@ -195,6 +201,7 @@ function App() {
     }
 
     lastDispatchedPromptRef.current = trimmed;
+    lastDispatchedAtRef.current = now;
     setCurrentPrompt(trimmed);
     setLiveTranscript('');
     setLlmResponse('');
@@ -332,11 +339,11 @@ function App() {
       setLiveTranscript('');
       dispatchGroqDirectiveRef.current(activeText);
     } else if (activeText) {
-      // Adaptive 750ms natural pause for whispered/soft voice
+      // Wait 1.2s natural pause so multi-word app/calendar commands aren't cut in half
       speechDebounceRef.current = setTimeout(() => {
         setLiveTranscript('');
         dispatchGroqDirectiveRef.current(activeText);
-      }, 750);
+      }, 1200);
     }
   }, [resetWakeTimeout]);
 

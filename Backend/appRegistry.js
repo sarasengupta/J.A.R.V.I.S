@@ -445,10 +445,13 @@ public class WinFocus {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr p);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
-  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
   public static bool FocusMatching(string hint, bool chromeOnly) {
     IntPtr target = IntPtr.Zero;
     EnumWindows((h, l) => {
@@ -472,12 +475,15 @@ public class WinFocus {
       return true;
     }, IntPtr.Zero);
     if (target == IntPtr.Zero) return false;
-    // Brief Alt key tap unlocks Windows foreground focus restriction cleanly
-    keybd_event(0x12, 0, 0, UIntPtr.Zero);
-    keybd_event(0x12, 0, 2, UIntPtr.Zero);
+    // Clean Win32 thread-input attach (no fake Alt key press that activates menu bars)
+    IntPtr fg = GetForegroundWindow();
+    uint fgThread = fg != IntPtr.Zero ? GetWindowThreadProcessId(fg, IntPtr.Zero) : 0;
+    uint curThread = GetCurrentThreadId();
+    bool attached = fgThread != 0 && fgThread != curThread && AttachThreadInput(curThread, fgThread, true);
     if (IsIconic(target)) ShowWindow(target, 9); else ShowWindow(target, 5);
     BringWindowToTop(target);
     SetForegroundWindow(target);
+    if (attached) AttachThreadInput(curThread, fgThread, false);
     return true;
   }
 }
@@ -621,7 +627,6 @@ const PROCESS_MAP = {
 
 function runPsEncoded(script) {
   return new Promise((resolve) => {
-    // Run plain readable PowerShell script (never obfuscated -EncodedCommand) so antivirus never flags it
     const tmpFile = path.join(os.tmpdir(), `jarvis_helper_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.ps1`);
     try {
       fs.writeFileSync(tmpFile, script, 'utf-8');
@@ -787,7 +792,7 @@ public class WinCloser {
   }
 }
 "@
-[WinCloser]::CloseMatching(@(${safeTerms.map((t) => `'${t}'`).join(',')}), $${isChromeOnly ? 'true' : 'false'})
+[WinCloser]::CloseMatching([string[]]@(${safeTerms.map((t) => `'${t}'`).join(',')}), $${isChromeOnly ? 'true' : 'false'})
 `.trim();
 
   const winRes = await runPsEncoded(winClosePs);
