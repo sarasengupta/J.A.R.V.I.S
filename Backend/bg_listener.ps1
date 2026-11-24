@@ -1,12 +1,12 @@
-# J.A.R.V.I.S. Native Windows Background Voice Listener (System.Speech)
-# Runs only while the J.A.R.V.I.S. window is minimized/hidden so commands work 100% in the background.
+# J.A.R.V.I.S. Native Windows Background Voice Listener (Continuous RecognizeAsync)
+# Runs whenever the J.A.R.V.I.S. window loses focus or is minimized, completely outside Chrome.
 Add-Type -AssemblyName System.Speech
 
 $culture = New-Object System.Globalization.CultureInfo("en-US")
 $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($culture)
 
-# Build high-accuracy wake-word + command grammar
-$wake = New-Object System.Speech.Recognition.Choices("hey jarvis", "jarvis", "okay jarvis")
+# Wake phrases (including soft/whispered phonetics)
+$wake = New-Object System.Speech.Recognition.Choices("hey jarvis", "jarvis", "okay jarvis", "hi jarvis")
 
 $apps = New-Object System.Speech.Recognition.Choices(
     "youtube", "chrome", "google chrome", "calculator", "notepad", "spotify",
@@ -51,7 +51,7 @@ $directPhrases = New-Object System.Speech.Recognition.Choices(
     "what time is it", "what is the time", "what is today's date", "what day is it",
     "disable my alarms", "turn off all alarms", "list my alarms",
     "volume up", "volume down", "mute", "play", "pause", "next track", "previous track",
-    "take a screenshot", "lock computer", "show desktop", "bring back jarvis"
+    "take a screenshot", "lock computer", "show desktop", "bring back jarvis", "maximize jarvis"
 )
 $gbDirect = New-Object System.Speech.Recognition.GrammarBuilder
 $gbDirect.Append($wake)
@@ -63,13 +63,21 @@ $engine.LoadGrammar((New-Object System.Speech.Recognition.Grammar($gbWin)))
 $engine.LoadGrammar((New-Object System.Speech.Recognition.Grammar($gbDirect)))
 
 $engine.SetInputToDefaultAudioDevice()
+
+# Continuous asynchronous recognition (zero 5s timeout cutoffs!)
+Register-ObjectEvent -InputObject $engine -EventName SpeechRecognized -Action {
+    $res = $Event.SourceEventArgs.Result
+    if ($res -and $res.Confidence -ge 0.35) {
+        [Console]::Out.WriteLine("CMD:" + $res.Text)
+        [Console]::Out.Flush()
+    }
+} | Out-Null
+
+$engine.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
 [Console]::Out.WriteLine("BG_VOICE_READY")
 [Console]::Out.Flush()
 
+# Keep event loop alive until stopped by Node backend
 while ($true) {
-    $result = $engine.Recognize([TimeSpan]::FromSeconds(5))
-    if ($result -and $result.Confidence -ge 0.62) {
-        [Console]::Out.WriteLine("CMD:" + $result.Text)
-        [Console]::Out.Flush()
-    }
+    Start-Sleep -Milliseconds 250
 }

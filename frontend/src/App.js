@@ -589,16 +589,43 @@ function App() {
       }
     }, 3000);
 
+    const activateBackgroundVoice = () => {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('http://localhost:3001/api/bg-voice/resume');
+      } else {
+        fetch('http://localhost:3001/api/bg-voice/resume', { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    };
+
+    const pauseBackgroundVoice = () => {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('http://localhost:3001/api/bg-voice/pause');
+      } else {
+        fetch('http://localhost:3001/api/bg-voice/pause', { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    };
+
+    // Ensure background listener is paused while HUD is initially active
+    pauseBackgroundVoice();
+
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Hand voice control to native Windows System.Speech while minimized/hidden
-        fetch('http://localhost:3001/api/bg-voice/resume', { method: 'POST' }).catch(() => {});
+        activateBackgroundVoice();
       } else {
-        // Pause native background listener when HUD is visible again so they never double-fire
-        fetch('http://localhost:3001/api/bg-voice/pause', { method: 'POST' }).catch(() => {});
+        pauseBackgroundVoice();
         if (shouldListenRef.current && !isStartedRef.current) {
           startSpeechRecognition();
         }
+      }
+    };
+
+    // Also hand off to native Windows voice when Sara switches to another app (blur)
+    // and hand back to the HUD when she clicks back into J.A.R.V.I.S. (focus)
+    const handleWindowBlur = () => activateBackgroundVoice();
+    const handleWindowFocus = () => {
+      pauseBackgroundVoice();
+      if (shouldListenRef.current && !isStartedRef.current) {
+        startSpeechRecognition();
       }
     };
 
@@ -622,6 +649,8 @@ function App() {
     window.addEventListener('click', handleFirstGesture);
     window.addEventListener('touchstart', handleFirstGesture);
     window.addEventListener('keydown', handleFirstGesture);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
@@ -652,6 +681,8 @@ function App() {
       window.removeEventListener('click', handleFirstGesture);
       window.removeEventListener('touchstart', handleFirstGesture);
       window.removeEventListener('keydown', handleFirstGesture);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
