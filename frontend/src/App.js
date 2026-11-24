@@ -63,6 +63,8 @@ function App() {
   const keepAliveStreamRef = useRef(null);
   const keepAliveAudioCtxRef = useRef(null);
   const emotionMonitorRef = useRef(null);
+  const speakingFailsafeRef = useRef(null);
+  const lastRecognitionActivityRef = useRef(Date.now());
   const terminalEndRef = useRef(null);
   const wakeTimerRef = useRef(null);
 
@@ -74,22 +76,36 @@ function App() {
     }, 45000);
   }, []);
 
-  // Centralized speech coordinator to prevent speech loop/feedback
+  // Centralized speech coordinator with automatic failsafe so isJarvisSpeakingRef
+  // can NEVER get permanently stuck at true if Chrome drops an audio onended event.
   const speakJarvis = useCallback((text, onEnd) => {
+    clearTimeout(speakingFailsafeRef.current);
     isJarvisSpeakingRef.current = true;
     setIsSpeaking(true);
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(speakingFailsafeRef.current);
+      isJarvisSpeakingRef.current = false;
+      setIsSpeaking(false);
+      if (onEnd) onEnd();
+    };
+
+    // Failsafe: auto-unlock microphone if audio/TTS ever fails to fire onended
+    const maxMs = Math.min(20000, Math.max(6000, ((text || '').length) * 120));
+    speakingFailsafeRef.current = setTimeout(finish, maxMs);
 
     speakWithProfile(
       text,
       () => {
-        isJarvisSpeakingRef.current = true;
-        setIsSpeaking(true);
+        if (!done) {
+          isJarvisSpeakingRef.current = true;
+          setIsSpeaking(true);
+        }
       },
-      () => {
-        isJarvisSpeakingRef.current = false;
-        setIsSpeaking(false);
-        if (onEnd) onEnd();
-      }
+      finish
     );
   }, []);
 
@@ -381,6 +397,7 @@ function App() {
 
       recognition.onstart = () => {
         isStartedRef.current = true;
+        lastRecognitionActivityRef.current = Date.now();
         setIsListening(true);
         setSpeechError(null);
       };
@@ -410,6 +427,7 @@ function App() {
       };
 
       recognition.onresult = (event) => {
+        lastRecognitionActivityRef.current = Date.now();
         let currentChunk = '';
         let isChunkFinal = false;
 
@@ -557,9 +575,16 @@ function App() {
       }
     };
 
-    // Background watchdog: auto-revive speech recognition if Chrome ever drops it while minimized
+    // Background watchdog: revive speech recognition if Chrome drops it OR if Chrome's
+    // speech socket goes silently stale after 45s without emitting any events.
     const watchdog = setInterval(() => {
-      if (shouldListenRef.current && !isStartedRef.current) {
+      if (!shouldListenRef.current) return;
+      const stale = isStartedRef.current &&
+        !isJarvisSpeakingRef.current &&
+        !isGeneratingRef.current &&
+        Date.now() - lastRecognitionActivityRef.current > 45000;
+      if (!isStartedRef.current || stale) {
+        lastRecognitionActivityRef.current = Date.now();
         startSpeechRecognition();
       }
     }, 3000);
@@ -598,6 +623,7 @@ function App() {
       if (pingInterval) clearInterval(pingInterval);
       clearTimeout(restartTimerRef.current);
       clearTimeout(speechDebounceRef.current);
+      clearTimeout(speakingFailsafeRef.current);
       if (activeAbortRef.current) activeAbortRef.current();
       if (recognitionRef.current) {
         try {
