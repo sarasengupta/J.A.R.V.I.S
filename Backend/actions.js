@@ -665,8 +665,10 @@ function systemControl(command) {
         $bmp.Dispose()
       `.trim();
 
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      exec(`powershell -EncodedCommand ${encoded}`, (err) => {
+      const tmpPs = path.join(os.tmpdir(), `jarvis_shot_${Date.now()}.ps1`);
+      fs.writeFileSync(tmpPs, psScript, 'utf-8');
+      exec(`powershell.exe -NoProfile -File "${tmpPs}"`, { windowsHide: true }, (err) => {
+        try { fs.unlinkSync(tmpPs); } catch (e) {}
         resolve({
           success: !err,
           action: 'screenshot',
