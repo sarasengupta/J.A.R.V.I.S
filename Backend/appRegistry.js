@@ -621,8 +621,15 @@ const PROCESS_MAP = {
 
 function runPsEncoded(script) {
   return new Promise((resolve) => {
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
-    exec(`powershell.exe -NoProfile -EncodedCommand ${encoded}`, { windowsHide: true, timeout: 10000 }, (err, stdout) => {
+    // Run plain readable PowerShell script (never obfuscated -EncodedCommand) so antivirus never flags it
+    const tmpFile = path.join(os.tmpdir(), `jarvis_helper_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.ps1`);
+    try {
+      fs.writeFileSync(tmpFile, script, 'utf-8');
+    } catch (err) {
+      return resolve({ ok: false, stdout: '', error: err.message });
+    }
+    exec(`powershell.exe -NoProfile -File "${tmpFile}"`, { windowsHide: true, timeout: 10000 }, (err, stdout) => {
+      try { fs.unlinkSync(tmpFile); } catch (e) {}
       resolve({ ok: !err, stdout: (stdout || '').trim(), error: err ? err.message : null });
     });
   });
