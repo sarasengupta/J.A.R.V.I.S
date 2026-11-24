@@ -8,6 +8,7 @@ $backendDir = Join-Path $rootDir "Backend"
 $iconPath   = Join-Path $appDir "jarvis.ico"
 $logPath    = Join-Path $appDir "jarvis.log"
 $baseUrl    = "http://localhost:3001"
+$healthUrl  = "http://127.0.0.1:3001/health"
 
 function Find-Chrome {
     $candidates = @(
@@ -32,8 +33,9 @@ function Open-JarvisWindow {
 
 function Test-CoreHealthy {
     try {
-        $req = [System.Net.WebRequest]::Create("$baseUrl/health")
-        $req.Timeout = 1000
+        $req = [System.Net.WebRequest]::Create($healthUrl)
+        $req.Timeout = 2000
+        $req.Proxy = $null
         $resp = $req.GetResponse()
         $ok = ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK)
         $resp.Close()
@@ -48,34 +50,41 @@ $script:backendProc = $null
 function Start-JarvisCore {
     if (Test-CoreHealthy) { return $true }
 
+    # Clear any stale listener holding port 3001 so Node never hits EADDRINUSE
+    Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 300
+
     $nodeExe = "C:\Program Files\nodejs\node.exe"
     if (-not (Test-Path $nodeExe)) { $nodeExe = "node" }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $nodeExe
-    $psi.Arguments = "server.js"
-    $psi.WorkingDirectory = $backendDir
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $nodeExe
+        $psi.Arguments = "server.js"
+        $psi.WorkingDirectory = $backendDir
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
 
-    try {
-        $script:backendProc = [System.Diagnostics.Process]::Start($psi)
-        # Drain stdout/stderr asynchronously into jarvis.log so buffers never fill
-        $script:backendProc.BeginOutputReadLine()
-        $script:backendProc.BeginErrorReadLine()
-    } catch {
-        Set-Content -Path $logPath -Value "Failed to start Node: $_"
-        return $false
-    }
+        try {
+            $script:backendProc = [System.Diagnostics.Process]::Start($psi)
+            $script:backendProc.BeginOutputReadLine()
+            $script:backendProc.BeginErrorReadLine()
+        } catch {
+            Set-Content -Path $logPath -Value "Failed to start Node: $_"
+            continue
+        }
 
-    for ($i = 0; $i -lt 40; $i++) {
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Milliseconds 300
+            if (Test-CoreHealthy) { return $true }
+            if ($script:backendProc -and $script:backendProc.HasExited) { break }
+        }
         Start-Sleep -Milliseconds 500
-        if (Test-CoreHealthy) { return $true }
-        if ($script:backendProc -and $script:backendProc.HasExited) { return $false }
     }
-    return $false
+    return (Test-CoreHealthy)
 }
 
 function Stop-JarvisCore {
