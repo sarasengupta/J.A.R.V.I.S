@@ -62,16 +62,25 @@ function openAppWindow() {
     process.exit(0);
   }
 
-  // Start J.A.R.V.I.S. backend directly in this trusted Node.js process
-  process.chdir(path.join(__dirname, '..', 'Backend'));
-  require(path.join(__dirname, '..', 'Backend', 'server.js'));
+  // Start J.A.R.V.I.S. backend as a detached hidden Node.js process so this
+  // launcher console closes itself automatically in <1 second (zero VBS/PowerShell).
+  const backendDir = path.join(__dirname, '..', 'Backend');
+  const serverScript = path.join(backendDir, 'server.js');
+  const core = spawn(process.execPath, [serverScript], {
+    cwd: backendDir,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  });
+  core.unref();
 
-  // Wait up to 10s for Express to bind, then open the J.A.R.V.I.S. window
+  // Wait up to 10s for Express to bind, then open the J.A.R.V.I.S. window and close launcher
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 250));
     if (await checkHealth()) {
       openAppWindow();
-      return;
+      process.exit(0);
     }
   }
+  process.exit(0);
 })();
