@@ -61,6 +61,13 @@ async function closeApp(appName) {
 }
 
 /**
+ * 1b2. Minimize / Maximize / Restore Window or Browser Tab
+ */
+async function windowControl(op, target) {
+  return registry.windowControl(op, target);
+}
+
+/**
  * 1c. Google Calendar Event Creator (opens pre-filled event in Google Chrome)
  */
 const CALENDAR_LOG_FILE = path.join(__dirname, 'calendar_events.json');
@@ -914,6 +921,7 @@ function searchFiles(query, folder = 'user') {
 module.exports = {
   openApp,
   closeApp,
+  windowControl,
   addCalendarEvent,
   updateCalendarEvent,
   manageAlarms,

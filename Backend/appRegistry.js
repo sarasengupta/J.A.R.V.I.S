@@ -952,6 +952,148 @@ Write-Output $targets.Count
   };
 }
 
+/**
+ * Minimize, maximize, or restore any open app, browser window/tab, active window,
+ * all windows, or J.A.R.V.I.S. itself (while keeping J.A.R.V.I.S. working in the background).
+ */
+async function windowControl(op = 'minimize', query = '') {
+  const mode = (op || 'minimize').toLowerCase(); // 'minimize' | 'maximize' | 'restore'
+  const raw = (query || '').trim();
+  const lower = raw.toLowerCase();
+
+  const isAll = /^(?:everything|all|all windows|all apps|all tabs|desktop)$/i.test(lower);
+  const isJarvis = /^(?:jarvis|yourself|self|this app|background)$/i.test(lower);
+  const isActive = !raw || /^(?:this|this window|current|current window|active|active window|it)$/i.test(lower);
+  const isTab = /^(?:tab|this tab|current tab|active tab|the tab|browser|chrome)$/i.test(lower);
+
+  let filter = '';
+  if (!isAll && !isJarvis && !isActive) {
+    if (isTab) {
+      filter = 'Google Chrome';
+    } else {
+      const m = resolveApp(raw);
+      filter = (m ? m.name : raw).replace(/['"`]/g, '');
+    }
+  }
+
+  const swCmd = mode === 'minimize' ? 6 : (mode === 'maximize' ? 3 : 9);
+  const bringFront = mode !== 'minimize';
+
+  const ps = `
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class WinSizer {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr p);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+
+  static void Apply(IntPtr h, int swCmd, bool focus) {
+    if (focus) {
+      IntPtr fg = GetForegroundWindow();
+      uint fgThread = fg != IntPtr.Zero ? GetWindowThreadProcessId(fg, IntPtr.Zero) : 0;
+      uint curThread = GetCurrentThreadId();
+      bool attached = fgThread != 0 && fgThread != curThread && AttachThreadInput(curThread, fgThread, true);
+      if (IsIconic(h)) ShowWindow(h, 9);
+      ShowWindow(h, swCmd);
+      BringWindowToTop(h);
+      SetForegroundWindow(h);
+      if (attached) AttachThreadInput(curThread, fgThread, false);
+    } else {
+      ShowWindow(h, swCmd);
+    }
+  }
+
+  public static int Run(string scope, string filter, int swCmd, bool focus) {
+    if (scope == "active") {
+      IntPtr fg = GetForegroundWindow();
+      if (fg == IntPtr.Zero) return 0;
+      var sb = new StringBuilder(512);
+      GetWindowText(fg, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t) || t.Equals("Program Manager", StringComparison.OrdinalIgnoreCase)) return 0;
+      Apply(fg, swCmd, focus);
+      return 1;
+    }
+
+    int count = 0;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t)) return true;
+      if (t.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) ||
+          t.Equals("Windows Input Experience", StringComparison.OrdinalIgnoreCase)) return true;
+
+      bool isJarvisWin = t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                         t.Equals("React App", StringComparison.OrdinalIgnoreCase);
+
+      if (scope == "jarvis") {
+        if (isJarvisWin) {
+          Apply(h, swCmd, focus);
+          count++;
+          return false;
+        }
+        return true;
+      }
+
+      if (scope == "all") {
+        Apply(h, swCmd, false);
+        count++;
+        return true;
+      }
+
+      // Specific app or browser tab window (skip JARVIS itself)
+      if (isJarvisWin) return true;
+      if (!string.IsNullOrEmpty(filter) && t.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0) {
+        Apply(h, swCmd, focus);
+        count++;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return count;
+  }
+}
+"@
+[WinSizer]::Run('${isAll ? 'all' : (isJarvis ? 'jarvis' : (isActive ? 'active' : 'filter'))}', '${filter}', ${swCmd}, $${bringFront ? 'true' : 'false'})
+`.trim();
+
+  const res = await runPsEncoded(ps);
+  const count = parseInt(res.stdout, 10) || 0;
+  const verbPast = mode === 'minimize' ? 'Minimized' : (mode === 'maximize' ? 'Maximized' : 'Restored');
+  const label = isAll ? 'all windows' : (isJarvis ? 'J.A.R.V.I.S.' : (isActive ? 'the active window' : (isTab ? 'the browser tab' : filter)));
+
+  if (count > 0) {
+    const extra = isJarvis && mode === 'minimize' ? ' Still listening in the background.' : '';
+    return {
+      success: true,
+      action: 'window_control',
+      op: mode,
+      target: label,
+      message: `${verbPast} ${label}, Ma'am.${extra}`
+    };
+  }
+  return {
+    success: false,
+    action: 'window_control',
+    op: mode,
+    target: label,
+    message: `I couldn't find an open ${label} window to ${mode}, Ma'am.`
+  };
+}
+
 // Kick off discovery in the background as soon as the backend starts.
 discoverStartMenuApps();
 
@@ -959,6 +1101,7 @@ module.exports = {
   resolveApp,
   launchApp,
   closeApp,
+  windowControl,
   launchUrl,
   listApps,
   refreshApps: discoverStartMenuApps,

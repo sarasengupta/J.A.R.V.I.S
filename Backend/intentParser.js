@@ -16,6 +16,11 @@ const CALENDAR_DELETE = /^(?:delete|remove|cancel)\s+(.+?)\s+(?:from|on|in)\s+(?
 const ALARM_DISABLE = /^(?:disable|turn\s+off|switch\s+off|stop|cancel|delete|dismiss|clear)\s+(?:all\s+|my\s+|the\s+)?(.*?\b(?:alarms?|reminders?)\b.*)$/i;
 const ALARM_SET = /^(?:set\s+(?:an?\s+)?alarm(?:\s+for)?|wake\s+me\s+up(?:\s+at)?)\s+(.+)$/i;
 const ALARM_LIST = /^(?:list|show|check|what\s+are)\s+(?:my\s+|all\s+)?alarms?$/i;
+const MINIMIZE_VERB = /^(?:minimize|minimise|hide|shrink)(?:\s+(.+))?$/i;
+const MAXIMIZE_VERB = /^(?:maximize|maximise|full\s*screen|expand|enlarge)(?:\s+(.+))?$/i;
+const RESTORE_VERB = /^(?:restore|unminimize|unminimise|bring\s+back)(?:\s+(.+))?$/i;
+const GO_BACKGROUND = /^(?:go\s+(?:to|into)\s+(?:the\s+)?background|work\s+in\s+(?:the\s+)?background|run\s+in\s+(?:the\s+)?background)$/i;
+const SHOW_DESKTOP = /^(?:show\s+(?:my\s+|the\s+)?desktop)$/i;
 const TIME_QUERY = /^(?:what\s+time\s+is\s+it(?:\s+(?:right\s+)?now)?|what(?:'?s| is)\s+(?:the\s+)?(?:current\s+)?time(?:\s+(?:right\s+)?now)?|tell\s+me\s+the\s+time|current\s+time|time\s+now|time\s+please)$/i;
 const DATE_QUERY = /^(?:what(?:'?s| is)?\s+(?:today'?s\s+)?(?:the\s+)?(?:current\s+)?date|what\s+day\s+(?:is\s+it|is\s+today)|tell\s+me\s+(?:the\s+|today'?s\s+)?date|today'?s\s+date)$/i;
 const DATETIME_QUERY = /^(?:what(?:'?s| is)?\s+(?:the\s+)?(?:date\s+and\s+time|time\s+and\s+date))$/i;
@@ -63,6 +68,27 @@ function parseIntent(text) {
   if (m) return { intent: 'manage_alarms', op: 'set', query: m[1].replace(TRAILING_FILLER, '').trim() };
 
   if (ALARM_LIST.test(t)) return { intent: 'manage_alarms', op: 'list', query: '' };
+
+  if (GO_BACKGROUND.test(t)) return { intent: 'window_control', op: 'minimize', target: 'jarvis' };
+  if (SHOW_DESKTOP.test(t)) return { intent: 'window_control', op: 'minimize', target: 'everything' };
+
+  m = t.match(MINIMIZE_VERB);
+  if (m) {
+    const target = (m[1] || 'this window').replace(TRAILING_FILLER, '').replace(/^(?:the|my)\s+/i, '').trim();
+    return { intent: 'window_control', op: 'minimize', target: target || 'this window' };
+  }
+
+  m = t.match(MAXIMIZE_VERB);
+  if (m) {
+    const target = (m[1] || 'this window').replace(TRAILING_FILLER, '').replace(/^(?:the|my)\s+/i, '').trim();
+    return { intent: 'window_control', op: 'maximize', target: target || 'this window' };
+  }
+
+  m = t.match(RESTORE_VERB);
+  if (m) {
+    const target = (m[1] || 'jarvis').replace(TRAILING_FILLER, '').replace(/^(?:the|my)\s+/i, '').trim();
+    return { intent: 'window_control', op: 'restore', target: target || 'jarvis' };
+  }
 
   m = t.match(CALENDAR_VIEW);
   if (m) return { intent: 'update_calendar_event', op: 'view', event: m[1].toLowerCase() };
@@ -134,6 +160,11 @@ async function handleIntent(text) {
       result: { success: true, time: timeStr, date: dateStr },
       message
     };
+  }
+
+  if (parsed.intent === 'window_control') {
+    const result = await actions.windowControl(parsed.op, parsed.target);
+    return { handled: true, intent: parsed, result, message: result.message };
   }
 
   if (parsed.intent === 'manage_alarms') {
