@@ -4,6 +4,7 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 const actions = require('./actions');
 const appRegistry = require('./appRegistry');
 const intentParser = require('./intentParser');
+const backgroundVoice = require('./backgroundVoice');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -267,10 +268,24 @@ app.post('/api/ping', (req, res) => {
 app.post('/api/shutdown', (req, res) => {
   if (!shutdownTimer) {
     shutdownTimer = setTimeout(() => {
+      backgroundVoice.stopBackgroundListener();
       process.exit(0);
     }, 4000);
   }
   res.json({ shuttingDown: true });
+});
+
+// Native Windows background voice listener toggle (active while HUD is minimized/hidden)
+app.post('/api/bg-voice/resume', (req, res) => {
+  res.json(backgroundVoice.startBackgroundListener());
+});
+
+app.post('/api/bg-voice/pause', (req, res) => {
+  res.json(backgroundVoice.stopBackgroundListener());
+});
+
+app.get('/api/bg-voice/status', (req, res) => {
+  res.json({ running: backgroundVoice.isRunning() });
 });
 
 // Serve the built J.A.R.V.I.S. interface (frontend/build) so the whole app runs

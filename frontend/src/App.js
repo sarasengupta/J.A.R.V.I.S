@@ -590,8 +590,15 @@ function App() {
     }, 3000);
 
     const handleVisibilityChange = () => {
-      if (shouldListenRef.current && !isStartedRef.current) {
-        startSpeechRecognition();
+      if (document.hidden) {
+        // Hand voice control to native Windows System.Speech while minimized/hidden
+        fetch('http://localhost:3001/api/bg-voice/resume', { method: 'POST' }).catch(() => {});
+      } else {
+        // Pause native background listener when HUD is visible again so they never double-fire
+        fetch('http://localhost:3001/api/bg-voice/pause', { method: 'POST' }).catch(() => {});
+        if (shouldListenRef.current && !isStartedRef.current) {
+          startSpeechRecognition();
+        }
       }
     };
 
