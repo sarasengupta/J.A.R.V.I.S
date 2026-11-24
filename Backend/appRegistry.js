@@ -732,12 +732,98 @@ public class AllCloser {
     };
   }
 
-  const match = resolveApp(raw);
+  // 2b. "close tab / this tab / current tab" OR closing a specific website tab (e.g. "close YouTube")
+  const isGenericTab = /^(?:tab|this tab|current tab|active tab|the tab)$/i.test(lowerRaw);
+  const match = isGenericTab ? null : resolveApp(raw);
   const displayName = match ? match.name : raw;
   const key = displayName.toLowerCase();
+  const isSpecificWebTab = !!(match && match.candidate && match.candidate.type === 'url');
+
+  if (isGenericTab || isSpecificWebTab) {
+    const tabFilter = isGenericTab ? '' : displayName.replace(/['"`]/g, '');
+    const tabPs = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class TabCloser {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr p);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  public static bool FocusBrowserTab(string filter) {
+    IntPtr target = IntPtr.Zero;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t)) return true;
+      if (t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 ||
+          t.Equals("React App", StringComparison.OrdinalIgnoreCase)) return true;
+      bool isBrowser = t.IndexOf("Google Chrome", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       t.IndexOf("Microsoft Edge", StringComparison.OrdinalIgnoreCase) >= 0;
+      if (!isBrowser) return true;
+      if (string.IsNullOrEmpty(filter) || t.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0) {
+        target = h;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    if (target == IntPtr.Zero) return false;
+    IntPtr fg = GetForegroundWindow();
+    uint fgThread = fg != IntPtr.Zero ? GetWindowThreadProcessId(fg, IntPtr.Zero) : 0;
+    uint curThread = GetCurrentThreadId();
+    bool attached = fgThread != 0 && fgThread != curThread && AttachThreadInput(curThread, fgThread, true);
+    if (IsIconic(target)) ShowWindow(target, 9); else ShowWindow(target, 5);
+    BringWindowToTop(target);
+    SetForegroundWindow(target);
+    if (attached) AttachThreadInput(curThread, fgThread, false);
+    return true;
+  }
+}
+"@
+if ([TabCloser]::FocusBrowserTab('${tabFilter}')) {
+  Start-Sleep -Milliseconds 120
+  [System.Windows.Forms.SendKeys]::SendWait('^w')
+  Write-Output 1
+} else {
+  Write-Output 0
+}
+`.trim();
+
+    const tabRes = await runPsEncoded(tabPs);
+    const closed = parseInt(tabRes.stdout, 10) || 0;
+    if (closed > 0) {
+      return {
+        success: true,
+        action: 'close_app',
+        app: isGenericTab ? 'current tab' : displayName,
+        closedCount: 1,
+        message: isGenericTab ? "Closed that tab, Ma'am." : `Closed the ${displayName} tab, Ma'am.`
+      };
+    }
+    return {
+      success: false,
+      action: 'close_app',
+      app: isGenericTab ? 'tab' : displayName,
+      message: isGenericTab
+        ? "I didn't find an active browser tab to close, Ma'am."
+        : `I didn't find an active ${displayName} tab to close, Ma'am.`
+    };
+  }
 
   // 3. Universal Win32 EnumWindows closer — handles Store/UWP apps (ApplicationFrameHost),
-  //    Chrome/Edge website windows, and standard desktop windows by title!
+  //    Chrome whole-browser close, and standard desktop windows by title!
   const isChromeOnly = key === 'google chrome' || key === 'chrome';
   const titleTerms = new Set();
   if (!isChromeOnly) {
