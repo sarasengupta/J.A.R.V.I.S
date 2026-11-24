@@ -61,6 +61,7 @@ function App() {
   const lastDispatchedPromptRef = useRef('');
   const lastDispatchedAtRef = useRef(0);
   const keepAliveStreamRef = useRef(null);
+  const keepAliveAudioCtxRef = useRef(null);
   const emotionMonitorRef = useRef(null);
   const terminalEndRef = useRef(null);
   const wakeTimerRef = useRef(null);
@@ -472,6 +473,8 @@ function App() {
           setIsListening(false);
           isStartedRef.current = false;
           setSpeechError('Microphone blocked by Chrome. Click anywhere on the page, then allow the mic in the address bar.');
+        } else if (event.error === 'aborted' || event.error === 'network' || event.error === 'audio-capture') {
+          isStartedRef.current = false;
         }
       };
 
@@ -496,9 +499,33 @@ function App() {
     }
   }, []);
 
-  // Explicitly prompt for mic permission via getUserMedia and keep the mic stream open
-  // so Chrome never suspends J.A.R.V.I.S. while minimized or behind other apps.
+  // Explicitly prompt for mic permission via getUserMedia and keep both a live mic stream
+  // AND an inaudible Web Audio keep-alive oscillator running so Chrome treats J.A.R.V.I.S.
+  // like an active voice call (exempt from background tab freezing & timer throttling).
+  const startBackgroundAudioKeepAlive = useCallback(() => {
+    try {
+      if (keepAliveAudioCtxRef.current) {
+        if (keepAliveAudioCtxRef.current.state === 'suspended') {
+          keepAliveAudioCtxRef.current.resume().catch(() => {});
+        }
+        return;
+      }
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 1; // sub-audible 1 Hz
+      gain.gain.value = 0.00001; // completely silent, keeps Chrome audio pipeline active
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      keepAliveAudioCtxRef.current = ctx;
+    } catch (e) {}
+  }, []);
+
   const requestMicAndStart = useCallback(async () => {
+    startBackgroundAudioKeepAlive();
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         if (!keepAliveStreamRef.current) {
@@ -517,7 +544,7 @@ function App() {
 
     shouldListenRef.current = true;
     startSpeechRecognition();
-  }, [startSpeechRecognition]);
+  }, [startSpeechRecognition, startBackgroundAudioKeepAlive]);
 
   // Start listening on mount & keep working in the background until Sara closes the window
   useEffect(() => {
@@ -576,6 +603,10 @@ function App() {
         try {
           recognitionRef.current.stop();
         } catch (e) {}
+      }
+      if (keepAliveAudioCtxRef.current) {
+        keepAliveAudioCtxRef.current.close().catch(() => {});
+        keepAliveAudioCtxRef.current = null;
       }
       if (emotionMonitorRef.current) {
         emotionMonitorRef.current.stop();
