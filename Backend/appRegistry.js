@@ -482,7 +482,10 @@ public class WinFocus {
   }
 }
 "@
-[WinFocus]::FocusMatching('${safeHint}', $${isChrome ? 'true' : 'false'})
+for ($attempt = 0; $attempt -lt 6; $attempt++) {
+  if ([WinFocus]::FocusMatching('${safeHint}', $${isChrome ? 'true' : 'false'})) { break }
+  Start-Sleep -Milliseconds 350
+}
 `.trim();
   // Fire-and-forget so the HTTP response stays instant while the window pops to front
   runPsEncoded(ps).catch(() => {});
