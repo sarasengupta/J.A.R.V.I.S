@@ -24,9 +24,9 @@ function Find-Chrome {
 function Open-JarvisWindow {
     $chrome = Find-Chrome
     if ($chrome) {
-        Start-Process -FilePath $chrome -ArgumentList "--app=$baseUrl --window-size=1440,900"
+        Start-Process -FilePath $chrome -ArgumentList "--app=$baseUrl/?desktop=1 --window-size=1440,900 --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
     } else {
-        Start-Process $baseUrl
+        Start-Process "$baseUrl/?desktop=1"
     }
 }
 
@@ -149,6 +149,19 @@ try {
             Open-JarvisWindow
         }
     })
+
+    # Auto-exit tray app cleanly once the backend shuts down after window close
+    $exitWatcher = New-Object System.Windows.Forms.Timer
+    $exitWatcher.Interval = 2000
+    $exitWatcher.Add_Tick({
+        if ($script:backendProc -and $script:backendProc.HasExited) {
+            $exitWatcher.Stop()
+            $tray.Visible = $false
+            $tray.Dispose()
+            [System.Windows.Forms.Application]::Exit()
+        }
+    })
+    $exitWatcher.Start()
 
     Open-JarvisWindow
     [System.Windows.Forms.Application]::Run()

@@ -54,6 +54,13 @@ async function openApp(appName) {
 }
 
 /**
+ * 1b. Close Running Application / Browser Window
+ */
+async function closeApp(appName) {
+  return registry.closeApp(appName);
+}
+
+/**
  * 2. File & Document Writing (Desktop / Documents)
  */
 function writeDesktopFile(filename, content, folder = 'desktop') {
@@ -536,6 +543,7 @@ function searchFiles(query, folder = 'user') {
 
 module.exports = {
   openApp,
+  closeApp,
   launchBrowser,
   writeDesktopFile,
   readDesktopFile,

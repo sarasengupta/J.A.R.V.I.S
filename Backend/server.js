@@ -143,6 +143,9 @@ app.post('/api/action/execute', async (req, res) => {
       case 'open_app':
         result = await actions.openApp(params.app || params.appName || params.target);
         break;
+      case 'close_app':
+        result = await actions.closeApp(params.app || params.appName || params.target);
+        break;
       case 'write_file':
         result = await actions.writeDesktopFile(params.filename, params.content, params.folder);
         break;
@@ -223,6 +226,27 @@ app.post('/api/apps/refresh', async (req, res) => {
 app.get('/api/tasks', (req, res) => {
   const result = actions.manageTasks('list');
   res.json(result);
+});
+
+// Desktop app lifecycle: stays alive while window is open/minimized,
+// and shuts down cleanly 4s after Sara closes the window (cancels if refreshed).
+let shutdownTimer = null;
+
+app.post('/api/ping', (req, res) => {
+  if (shutdownTimer) {
+    clearTimeout(shutdownTimer);
+    shutdownTimer = null;
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/shutdown', (req, res) => {
+  if (!shutdownTimer) {
+    shutdownTimer = setTimeout(() => {
+      process.exit(0);
+    }, 4000);
+  }
+  res.json({ shuttingDown: true });
 });
 
 // Serve the built J.A.R.V.I.S. interface (frontend/build) so the whole app runs

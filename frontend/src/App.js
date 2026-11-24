@@ -53,6 +53,7 @@ function App() {
   const speechDebounceRef = useRef(null);
   const activeAbortRef = useRef(null);
   const lastDispatchedPromptRef = useRef('');
+  const keepAliveStreamRef = useRef(null);
   const terminalEndRef = useRef(null);
   const wakeTimerRef = useRef(null);
 
@@ -475,11 +476,14 @@ function App() {
     }
   }, []);
 
-  // Explicitly prompt for mic permission via getUserMedia and start speech recognition
+  // Explicitly prompt for mic permission via getUserMedia and keep the mic stream open
+  // so Chrome never suspends J.A.R.V.I.S. while minimized or behind other apps.
   const requestMicAndStart = useCallback(async () => {
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!keepAliveStreamRef.current) {
+          keepAliveStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
         setMicPermissionGranted(true);
         setSpeechError(null);
       }
@@ -492,10 +496,10 @@ function App() {
     startSpeechRecognition();
   }, [startSpeechRecognition]);
 
-  // Start listening on mount & keep listeners persistent throughout session
+  // Start listening on mount & keep working in the background until Sara closes the window
   useEffect(() => {
     shouldListenRef.current = true;
-    startSpeechRecognition();
+    requestMicAndStart();
 
     const handleFirstGesture = () => {
       if (!isStartedRef.current) {
@@ -503,12 +507,45 @@ function App() {
       }
     };
 
+    // Background watchdog: auto-revive speech recognition if Chrome ever drops it while minimized
+    const watchdog = setInterval(() => {
+      if (shouldListenRef.current && !isStartedRef.current) {
+        startSpeechRecognition();
+      }
+    }, 3000);
+
+    const handleVisibilityChange = () => {
+      if (shouldListenRef.current && !isStartedRef.current) {
+        startSpeechRecognition();
+      }
+    };
+
+    // Desktop app lifecycle (?desktop=1): stays running in background until window is closed
+    const isDesktopApp = new URLSearchParams(window.location.search).get('desktop') === '1';
+    let pingInterval = null;
+    const handleBeforeUnload = () => {
+      if (isDesktopApp && navigator.sendBeacon) {
+        navigator.sendBeacon('http://localhost:3001/api/shutdown');
+      }
+    };
+
+    if (isDesktopApp) {
+      fetch('http://localhost:3001/api/ping', { method: 'POST' }).catch(() => {});
+      pingInterval = setInterval(() => {
+        fetch('http://localhost:3001/api/ping', { method: 'POST' }).catch(() => {});
+      }, 4000);
+      window.addEventListener('beforeunload', handleBeforeUnload);
+    }
+
     window.addEventListener('click', handleFirstGesture);
     window.addEventListener('touchstart', handleFirstGesture);
     window.addEventListener('keydown', handleFirstGesture);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       shouldListenRef.current = false;
+      clearInterval(watchdog);
+      if (pingInterval) clearInterval(pingInterval);
       clearTimeout(restartTimerRef.current);
       clearTimeout(speechDebounceRef.current);
       if (activeAbortRef.current) activeAbortRef.current();
@@ -517,9 +554,15 @@ function App() {
           recognitionRef.current.stop();
         } catch (e) {}
       }
+      if (keepAliveStreamRef.current) {
+        keepAliveStreamRef.current.getTracks().forEach((t) => t.stop());
+        keepAliveStreamRef.current = null;
+      }
       window.removeEventListener('click', handleFirstGesture);
       window.removeEventListener('touchstart', handleFirstGesture);
       window.removeEventListener('keydown', handleFirstGesture);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [startSpeechRecognition, requestMicAndStart]);
 

@@ -8,7 +8,7 @@
 //   3. Curated registry below (first *available* launch candidate wins)
 //   4. Auto-discovered Start Menu apps (Get-StartApps, incl. Store/UWP apps)
 
-const { exec, execSync } = require('child_process');
+const { exec, execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -108,7 +108,30 @@ const CURATED_APPS = [
   { name: 'X', aliases: ['twitter', 'x'], launch: [{ type: 'url', url: 'https://x.com' }] },
   { name: 'Reddit', aliases: ['reddit'], launch: [{ type: 'url', url: 'https://www.reddit.com' }] },
   { name: 'LinkedIn', aliases: ['linkedin', 'linked in'], launch: [{ type: 'url', url: 'https://www.linkedin.com' }] },
-  { name: 'Amazon', aliases: ['amazon'], launch: [{ type: 'url', url: 'https://www.amazon.in' }] }
+  { name: 'Amazon', aliases: ['amazon'], launch: [{ type: 'url', url: 'https://www.amazon.in' }] },
+  { name: 'Google Slides', aliases: ['google slides', 'slides'], launch: [{ type: 'url', url: 'https://slides.google.com' }] },
+  { name: 'Google Meet', aliases: ['google meet', 'meet'], launch: [{ type: 'url', url: 'https://meet.google.com' }] },
+  { name: 'Notion', aliases: ['notion'], launch: [{ type: 'uri', uri: 'notion:' }, { type: 'url', url: 'https://www.notion.so' }] },
+  { name: 'Canva', aliases: ['canva'], launch: [{ type: 'url', url: 'https://www.canva.com' }] },
+  { name: 'Figma', aliases: ['figma'], launch: [{ type: 'url', url: 'https://www.figma.com' }] },
+  { name: 'Wikipedia', aliases: ['wikipedia', 'wiki'], launch: [{ type: 'url', url: 'https://www.wikipedia.org' }] },
+  { name: 'Pinterest', aliases: ['pinterest'], launch: [{ type: 'url', url: 'https://www.pinterest.com' }] },
+  { name: 'Facebook', aliases: ['facebook', 'fb'], launch: [{ type: 'url', url: 'https://www.facebook.com' }] },
+  { name: 'Telegram', aliases: ['telegram'], launch: [{ type: 'uri', uri: 'tg:' }, { type: 'url', url: 'https://web.telegram.org' }] },
+  { name: 'Zoom', aliases: ['zoom'], launch: [{ type: 'uri', uri: 'zoommtg:' }, { type: 'url', url: 'https://zoom.us' }] },
+  { name: 'Prime Video', aliases: ['prime video', 'amazon prime', 'prime'], launch: [{ type: 'url', url: 'https://www.primevideo.com' }] },
+  { name: 'Hotstar', aliases: ['hotstar', 'disney plus', 'jiohotstar'], launch: [{ type: 'url', url: 'https://www.hotstar.com' }] },
+  { name: 'Flipkart', aliases: ['flipkart'], launch: [{ type: 'url', url: 'https://www.flipkart.com' }] },
+  { name: 'Twitch', aliases: ['twitch'], launch: [{ type: 'url', url: 'https://www.twitch.tv' }] },
+
+  // Common Windows folders
+  { name: 'Downloads', aliases: ['downloads', 'downloads folder', 'my downloads'], launch: [{ type: 'exe', path: path.join(HOME, 'Downloads') }] },
+  { name: 'Documents', aliases: ['documents', 'documents folder', 'my documents'], launch: [{ type: 'exe', path: fs.existsSync(path.join(HOME, 'OneDrive', 'Documents')) ? path.join(HOME, 'OneDrive', 'Documents') : path.join(HOME, 'Documents') }] },
+  { name: 'Desktop', aliases: ['desktop', 'desktop folder', 'my desktop'], launch: [{ type: 'exe', path: fs.existsSync(path.join(HOME, 'OneDrive', 'Desktop')) ? path.join(HOME, 'OneDrive', 'Desktop') : path.join(HOME, 'Desktop') }] },
+  { name: 'Pictures', aliases: ['pictures', 'photos folder', 'my pictures'], launch: [{ type: 'exe', path: fs.existsSync(path.join(HOME, 'OneDrive', 'Pictures')) ? path.join(HOME, 'OneDrive', 'Pictures') : path.join(HOME, 'Pictures') }] },
+  { name: 'Videos', aliases: ['videos', 'videos folder', 'my videos'], launch: [{ type: 'exe', path: path.join(HOME, 'Videos') }] },
+  { name: 'Music Folder', aliases: ['music folder', 'my music'], launch: [{ type: 'exe', path: path.join(HOME, 'Music') }] },
+  { name: 'Recycle Bin', aliases: ['recycle bin', 'trash'], launch: [{ type: 'cmd', cmd: 'shell:RecycleBinFolder' }] }
 ];
 
 // ---------------------------------------------------------------------------
@@ -262,12 +285,50 @@ function scoreName(q, name) {
   if (q.startsWith(c + ' ') && q.split(' ').length - c.split(' ').length <= 1) return 75; // "spotify music" -> "spotify"
   const qw = q.split(' ');
   const cw = c.split(' ');
-  if (qw.length > 1 && qw.every((w) => cw.includes(w))) return 70;
+  if (qw.length === 1 && q.length >= 3 && cw.includes(q)) return 78; // "edge" -> "microsoft edge", "photos" -> "microsoft photos"
+  if (qw.length > 1 && qw.every((w) => cw.includes(w))) return 75;
   if (qc.length >= 4) {
     const maxDist = qc.length >= 8 ? 2 : 1;
     if (levenshtein(qc, cc) <= maxDist) return 65; // mis-heard: "spotfy", "discrod"
   }
   return 0;
+}
+
+// Discover Desktop shortcuts (.lnk, .url) and folders so Sara can say "open <shortcut/folder>"
+function loadDesktopEntries() {
+  const entries = [];
+  const dirs = [
+    path.join(HOME, 'OneDrive', 'Desktop'),
+    path.join(HOME, 'Desktop')
+  ];
+  const seen = new Set();
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      for (const item of fs.readdirSync(dir)) {
+        const lower = item.toLowerCase();
+        if (lower.startsWith('.') || lower.includes('j.a.r.v.i.s')) continue;
+        const full = path.join(dir, item);
+        const ext = path.extname(item).toLowerCase();
+        const base = ext === '.lnk' || ext === '.url' ? path.basename(item, ext) : item;
+        const key = base.toLowerCase();
+        if (seen.has(key)) continue;
+        const isLnk = ext === '.lnk' || ext === '.url';
+        let isDir = false;
+        try { isDir = fs.statSync(full).isDirectory(); } catch (e) {}
+        if (isLnk || isDir) {
+          seen.add(key);
+          entries.push({
+            name: base,
+            aliases: [base],
+            launch: [{ type: 'lnk', path: full }],
+            source: 'desktop'
+          });
+        }
+      }
+    } catch (e) {}
+  }
+  return entries;
 }
 
 const MATCH_THRESHOLD = 65;
@@ -291,8 +352,9 @@ function resolveApp(query) {
   if (!q) return null;
 
   const pools = [
-    { entries: loadUserApps(), bonus: 3 },
-    { entries: CURATED_APPS.map((e) => ({ ...e, source: 'curated' })), bonus: 2 },
+    { entries: loadUserApps(), bonus: 4 },
+    { entries: CURATED_APPS.map((e) => ({ ...e, source: 'curated' })), bonus: 3 },
+    { entries: loadDesktopEntries(), bonus: 2 },
     { entries: discoveredApps, bonus: 0 }
   ];
 
@@ -340,20 +402,127 @@ function buildLaunchCommand(c) {
       return `start "" ${q('shell:AppsFolder\\' + c.appId)}`;
     case 'url': {
       const chrome = chromePath();
-      return chrome ? `start "" ${q(chrome)} --new-window ${q(c.url)}` : `start "" ${q(c.url)}`;
+      return chrome ? `start "" ${q(chrome)} ${q(c.url)}` : `start "" ${q(c.url)}`;
     }
     default:
       return null;
   }
 }
 
-function runCandidate(candidate) {
+function spawnVisible(exePath, args = []) {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(exePath, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      });
+      child.on('error', (err) => resolve({ ok: false, error: err.message }));
+      child.unref();
+      // Give spawn a tick to surface immediate ENOENT errors
+      setTimeout(() => resolve({ ok: true, command: `${exePath} ${args.join(' ')}`.trim() }), 150);
+    } catch (err) {
+      resolve({ ok: false, error: err.message });
+    }
+  });
+}
+
+/**
+ * Bring the launched app or Chrome browser window to the front of Sara's screen
+ * (restoring if minimized and bypassing Windows background focus lock).
+ */
+function bringWindowToFront(titleHint = '', isChrome = false) {
+  const safeHint = (titleHint || '').replace(/['"`]/g, '');
+  const ps = `
+Start-Sleep -Milliseconds 500
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class WinFocus {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  public static bool FocusMatching(string hint, bool chromeOnly) {
+    IntPtr target = IntPtr.Zero;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t)) return true;
+      if (t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 || t.Equals("React App", StringComparison.OrdinalIgnoreCase)) return true;
+      if (chromeOnly) {
+        if (t.IndexOf("Google Chrome", StringComparison.OrdinalIgnoreCase) >= 0) {
+          target = h;
+          return false;
+        }
+        return true;
+      }
+      if (!string.IsNullOrEmpty(hint) && t.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) {
+        target = h;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    if (target == IntPtr.Zero) return false;
+    // Brief Alt key tap unlocks Windows foreground focus restriction cleanly
+    keybd_event(0x12, 0, 0, UIntPtr.Zero);
+    keybd_event(0x12, 0, 2, UIntPtr.Zero);
+    if (IsIconic(target)) ShowWindow(target, 9); else ShowWindow(target, 5);
+    BringWindowToTop(target);
+    SetForegroundWindow(target);
+    return true;
+  }
+}
+"@
+[WinFocus]::FocusMatching('${safeHint}', $${isChrome ? 'true' : 'false'})
+`.trim();
+  // Fire-and-forget so the HTTP response stays instant while the window pops to front
+  runPsEncoded(ps).catch(() => {});
+}
+
+function runCandidate(candidate, displayName = '') {
+  // Direct detached spawn for Chrome URLs (opens as a tab in Chrome & brings Chrome to front)
+  if (candidate.type === 'url') {
+    const chrome = chromePath();
+    if (chrome) {
+      return spawnVisible(chrome, [candidate.url]).then((res) => {
+        if (res.ok) bringWindowToFront(displayName, true);
+        return res;
+      });
+    }
+  }
+  if (candidate.type === 'exe' && candidate.path) {
+    // If the target path is a folder (Downloads, Documents, etc.), open it in File Explorer
+    try {
+      if (fs.existsSync(candidate.path) && fs.statSync(candidate.path).isDirectory()) {
+        return spawnVisible(path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe'), [candidate.path]).then((res) => {
+          if (res.ok) bringWindowToFront(displayName, false);
+          return res;
+        });
+      }
+    } catch (e) {}
+    const args = candidate.args ? candidate.args.split(/\s+/).filter(Boolean) : [];
+    const isChromeExe = path.basename(candidate.path).toLowerCase() === 'chrome.exe';
+    return spawnVisible(candidate.path, args).then((res) => {
+      if (res.ok) bringWindowToFront(displayName, isChromeExe);
+      return res;
+    });
+  }
+
   return new Promise((resolve) => {
     const command = buildLaunchCommand(candidate);
     if (!command) return resolve({ ok: false, error: `Unsupported launch type: ${candidate.type}` });
-    // exec() runs through cmd.exe on Windows, so `start` hands the app to the shell
-    // and it opens as a normal, visible window on the desktop.
-    exec(command, { windowsHide: true, timeout: 15000 }, (err) => {
+    // windowsHide: false ensures the launched GUI app does NOT inherit SW_HIDE
+    exec(command, { windowsHide: false, timeout: 15000 }, (err) => {
+      if (!err) bringWindowToFront(displayName, false);
       resolve(err ? { ok: false, error: err.message, command } : { ok: true, command });
     });
   });
@@ -373,7 +542,7 @@ async function launchApp(query) {
     };
   }
 
-  const run = await runCandidate(match.candidate);
+  const run = await runCandidate(match.candidate, match.name);
   return {
     success: run.ok,
     action: 'open_app',
@@ -416,12 +585,279 @@ function listApps() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Closing running apps (gracefully, without touching system processes or JARVIS)
+// ---------------------------------------------------------------------------
+const PROTECTED_PROCESSES = new Set([
+  'explorer', 'csrss', 'lsass', 'wininit', 'svchost', 'dwm', 'system', 'node', 'powershell'
+]);
+
+const PROCESS_MAP = {
+  'notepad': ['Notepad'],
+  'calculator': ['CalculatorApp', 'Calculator'],
+  'spotify': ['Spotify'],
+  'visual studio code': ['Code'],
+  'discord': ['Discord'],
+  'whatsapp': ['WhatsApp', 'WhatsApp.Root'],
+  'steam': ['steam'],
+  'microsoft word': ['WINWORD'],
+  'microsoft excel': ['EXCEL'],
+  'microsoft powerpoint': ['POWERPNT'],
+  'outlook': ['OUTLOOK', 'olk'],
+  'paint': ['mspaint'],
+  'windows terminal': ['WindowsTerminal'],
+  'command prompt': ['cmd'],
+  'task manager': ['Taskmgr'],
+  'settings': ['SystemSettings'],
+  'control panel': ['control'],
+  'camera': ['WindowsCamera'],
+  'clock': ['Time'],
+  'claude': ['claude'],
+  'chatgpt': ['ChatGPT', 'Codex']
+};
+
+function runPsEncoded(script) {
+  return new Promise((resolve) => {
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    exec(`powershell.exe -NoProfile -EncodedCommand ${encoded}`, { windowsHide: true, timeout: 10000 }, (err, stdout) => {
+      resolve({ ok: !err, stdout: (stdout || '').trim(), error: err ? err.message : null });
+    });
+  });
+}
+
+/**
+ * Close ANY running desktop app, Store/UWP app, browser window, active window,
+ * or all open apps by spoken name (never closes J.A.R.V.I.S. or Windows system processes).
+ */
+async function closeApp(query) {
+  const raw = (query || '').trim();
+  if (!raw) {
+    return { success: false, action: 'close_app', message: "Which app should I close, Ma'am?" };
+  }
+
+  const lowerRaw = raw.toLowerCase();
+
+  // 1. "close this / current window / active window"
+  if (/^(?:this|this window|current|current window|active|active window|that|that window|it)$/i.test(lowerRaw)) {
+    const ps = `
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class ActiveCloser {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static string CloseActive() {
+    IntPtr h = GetForegroundWindow();
+    if (h == IntPtr.Zero) return "";
+    var sb = new StringBuilder(512);
+    GetWindowText(h, sb, 512);
+    string t = sb.ToString();
+    if (string.IsNullOrEmpty(t) || t.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) || t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 || t.Equals("React App", StringComparison.OrdinalIgnoreCase)) return "";
+    PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    return t;
+  }
+}
+"@
+[ActiveCloser]::CloseActive()
+`.trim();
+    const res = await runPsEncoded(ps);
+    if (res.stdout) {
+      return { success: true, action: 'close_app', app: res.stdout, message: `Closed that window, Ma'am.` };
+    }
+    return { success: false, action: 'close_app', message: "There's no active app window to close right now, Ma'am." };
+  }
+
+  // 2. "close everything / all apps / all windows"
+  if (/^(?:everything|all|all apps|all windows|every app|every window)$/i.test(lowerRaw)) {
+    const ps = `
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class AllCloser {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static int CloseAll() {
+    int count = 0;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t)) return true;
+      if (t.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) ||
+          t.Equals("Windows Input Experience", StringComparison.OrdinalIgnoreCase) ||
+          t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 ||
+          t.Equals("React App", StringComparison.OrdinalIgnoreCase)) return true;
+      PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero);
+      count++;
+      return true;
+    }, IntPtr.Zero);
+    return count;
+  }
+}
+"@
+[AllCloser]::CloseAll()
+`.trim();
+    const res = await runPsEncoded(ps);
+    const closedCount = parseInt(res.stdout, 10) || 0;
+    return {
+      success: closedCount > 0,
+      action: 'close_app',
+      app: 'all apps',
+      closedCount,
+      message: closedCount > 0
+        ? `Closed ${closedCount} open window${closedCount > 1 ? 's' : ''}, Ma'am.`
+        : "There aren't any other open windows to close, Ma'am."
+    };
+  }
+
+  const match = resolveApp(raw);
+  const displayName = match ? match.name : raw;
+  const key = displayName.toLowerCase();
+
+  // 3. Universal Win32 EnumWindows closer — handles Store/UWP apps (ApplicationFrameHost),
+  //    Chrome/Edge website windows, and standard desktop windows by title!
+  const isChromeOnly = key === 'google chrome' || key === 'chrome';
+  const titleTerms = new Set();
+  if (!isChromeOnly) {
+    titleTerms.add(displayName);
+    titleTerms.add(raw);
+    const normRaw = normalize(raw);
+    if (normRaw && normRaw.length >= 3) titleTerms.add(normRaw);
+  }
+  const safeTerms = Array.from(titleTerms)
+    .filter((t) => t && t.length >= 2)
+    .map((t) => t.replace(/['"`]/g, ''));
+
+  const winClosePs = `
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class WinCloser {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static int CloseMatching(string[] filters, bool chromeOnly) {
+    int count = 0;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      string t = sb.ToString();
+      if (string.IsNullOrEmpty(t)) return true;
+      if (t.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) ||
+          t.IndexOf("J.A.R.V.I.S", StringComparison.OrdinalIgnoreCase) >= 0 ||
+          t.Equals("React App", StringComparison.OrdinalIgnoreCase)) return true;
+      if (chromeOnly) {
+        if (t.IndexOf("Google Chrome", StringComparison.OrdinalIgnoreCase) >= 0) {
+          PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero);
+          count++;
+        }
+        return true;
+      }
+      foreach (var f in filters) {
+        if (!string.IsNullOrEmpty(f) && t.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0) {
+          PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero);
+          count++;
+          break;
+        }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return count;
+  }
+}
+"@
+[WinCloser]::CloseMatching(@(${safeTerms.map((t) => `'${t}'`).join(',')}), $${isChromeOnly ? 'true' : 'false'})
+`.trim();
+
+  const winRes = await runPsEncoded(winClosePs);
+  const winClosed = parseInt(winRes.stdout, 10) || 0;
+
+  // For websites / Chrome, never kill chrome.exe processes directly (that would kill J.A.R.V.I.S.)
+  const isWebOrChrome = (match && match.candidate && match.candidate.type === 'url') || isChromeOnly;
+  if (winClosed > 0 || isWebOrChrome) {
+    if (winClosed > 0) {
+      return { success: true, action: 'close_app', app: displayName, closedCount: winClosed, message: `Closed ${displayName}, Ma'am.` };
+    }
+    return { success: false, action: 'close_app', app: displayName, message: `I didn't find an open ${displayName} window to close, Ma'am.` };
+  }
+
+  // 4. Process-name fallback (catches apps minimized to system tray like Spotify, Discord, Steam)
+  const procNames = new Set(PROCESS_MAP[key] || []);
+  if (match && match.candidate) {
+    if (match.candidate.path) {
+      procNames.add(path.basename(match.candidate.path, path.extname(match.candidate.path)));
+    }
+    if (match.candidate.cmd) {
+      procNames.add(match.candidate.cmd.replace(/\.exe$/i, ''));
+    }
+    if (match.candidate.exe) {
+      procNames.add(match.candidate.exe.replace(/\.exe$/i, ''));
+    }
+  }
+  const cleanWord = normalize(raw).replace(/\s+/g, '');
+  if (cleanWord) procNames.add(cleanWord);
+
+  const safeNames = Array.from(procNames)
+    .filter((n) => n && !PROTECTED_PROCESSES.has(n.toLowerCase()))
+    .map((n) => `'${n.replace(/'/g, "''")}'`);
+
+  const ps = `
+$targets = @()
+$names = @(${safeNames.join(',')})
+foreach ($n in $names) {
+  $p = Get-Process -Name $n -ErrorAction SilentlyContinue
+  if ($p) { $targets += $p }
+}
+$targets = $targets | Sort-Object Id -Unique
+if ($targets.Count -eq 0) { Write-Output 0; exit 0 }
+foreach ($proc in $targets) { try { $null = $proc.CloseMainWindow() } catch {} }
+Start-Sleep -Milliseconds 400
+foreach ($proc in $targets) {
+  try {
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+  } catch {}
+}
+Write-Output $targets.Count
+`.trim();
+
+  const res = await runPsEncoded(ps);
+  const closedCount = parseInt(res.stdout, 10) || 0;
+  if (closedCount > 0) {
+    return {
+      success: true,
+      action: 'close_app',
+      app: displayName,
+      closedCount,
+      message: `Closed ${displayName}, Ma'am.`
+    };
+  }
+
+  return {
+    success: false,
+    action: 'close_app',
+    app: displayName,
+    message: `${displayName} doesn't appear to be open right now, Ma'am.`
+  };
+}
+
 // Kick off discovery in the background as soon as the backend starts.
 discoverStartMenuApps();
 
 module.exports = {
   resolveApp,
   launchApp,
+  closeApp,
   launchUrl,
   listApps,
   refreshApps: discoverStartMenuApps,

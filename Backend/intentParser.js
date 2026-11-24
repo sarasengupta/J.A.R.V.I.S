@@ -7,11 +7,13 @@ const registry = require('./appRegistry');
 
 const WAKE_PREFIX = /^(?:(?:hey|hi|ok|okay|yo)\s+)?(?:jarvis|travis|javis|jarves)\b[\s,:]*/i;
 const POLITE_PREFIX = /^(?:(?:please|can you|could you|would you|will you|i want you to|i need you to|go ahead and)\s+)+/i;
-const OPEN_VERBS = /^(?:open(?:\s+up)?|launch|start(?:\s+up)?|run|fire\s+up|pull\s+up|bring\s+up|boot\s+up|load\s+up|load)\s+(.+)$/i;
+const OPEN_VERBS = /^(?:open(?:\s+up)?|launch|start(?:\s+up)?|run|fire\s+up|pull\s+up|bring\s+up|boot\s+up|load(?:\s+up)?|go\s+to|show(?:\s+me)?)\s+(.+)$/i;
+const CLOSE_VERBS = /^(?:close(?:\s+down)?|quit|exit|shut\s+down|kill|end|terminate)\s+(.+)$/i;
+const SYSTEM_TARGET = /\b(computer|laptop|pc|windows|system|jarvis|yourself)\b/i;
 const SITE_SEARCH = /^(?:search|look\s+up|find)\s+(youtube|google|amazon|github|reddit)\s+for\s+(.+)$/i;
 const SEARCH_ON_SITE = /^(?:search(?:\s+for)?|look\s+up|find)\s+(.+?)\s+on\s+(youtube|google|amazon|github|reddit)$/i;
 const WEB_SEARCH = /^(?:search(?:\s+the\s+web)?(?:\s+for)?|google|look\s+up)\s+(.+)$/i;
-const TRAILING_FILLER = /(?:\s+(?:for\s+me|please|now|right\s+now|quickly|app|application|program))+$/i;
+const TRAILING_FILLER = /(?:\s+(?:in|on|from|via|using)\s+(?:google\s+)?(?:chrome|browser)|\s+(?:for\s+me|please|now|right\s+now|quickly|app|application|program))+$/i;
 const FILE_REQUEST = /\b(file|files on|folder|document|on (?:my |the )?desktop|in (?:my |the )?documents)\b|\.(txt|pdf|docx?|xlsx?|pptx?|png|jpe?g|mp[34])\b/i;
 
 const SEARCH_URLS = {
@@ -43,6 +45,12 @@ function parseIntent(text) {
 
   m = t.match(SEARCH_ON_SITE);
   if (m) return { intent: 'web_search', engine: m[2].toLowerCase(), query: m[1].replace(TRAILING_FILLER, '').trim() };
+
+  m = t.match(CLOSE_VERBS);
+  if (m) {
+    const target = m[1].replace(TRAILING_FILLER, '').replace(/^(?:the|my)\s+/i, '').trim();
+    if (target && !SYSTEM_TARGET.test(target)) return { intent: 'close_app', target };
+  }
 
   m = t.match(OPEN_VERBS);
   if (m) {
@@ -76,6 +84,11 @@ async function handleIntent(text) {
       result,
       message: result.success ? `Searching for ${parsed.query}${where}, Ma'am.` : result.message
     };
+  }
+
+  if (parsed.intent === 'close_app') {
+    const result = await registry.closeApp(parsed.target);
+    return { handled: true, intent: parsed, result, message: result.message };
   }
 
   if (parsed.intent === 'open_app') {
